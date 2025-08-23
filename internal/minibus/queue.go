@@ -8,6 +8,7 @@ import (
 type consumer struct {
 	queue  *queue
 	client *client
+	name   string
 	once   bool
 	node   *node[*consumer]
 }
@@ -63,8 +64,8 @@ func (q *queue) run() {
 	}
 }
 
-func (q *queue) addConsumer(cl *client, once bool) *consumer {
-	c := &consumer{queue: q, client: cl, once: once}
+func (q *queue) addConsumer(cl *client, name string, once bool) *consumer {
+	c := &consumer{queue: q, client: cl, name: name, once: once}
 	c.node = q.consumers.push(c)
 	return c
 }
@@ -98,21 +99,21 @@ func (q *queue) dispatch(ctx context.Context, msg message) {
 
 	// Deliver (no list locks held)
 	if err := c.client.writeJSON(ctx, Frame{
-		Type:   "msg",
-		Kind:   QUEUE,
-		Target: q.name,
-		ID:     msg.id,
-		Data:   msg.data,
+		What: "msg",
+		From: q.name,
+		To:   c.name,
+		Id:   msg.id,
+		Data: msg.data,
 	}); err != nil {
 		if c.node != nil {
 			c.node.remove()
 		}
-		c.client.unsubscribe(QUEUE, q.name)
+		c.client.unsubscribe(q.name)
 		return
 	}
 
 	// If it was one-shot, drop from the client’s map after successful send
 	if c.once {
-		c.client.unsubscribe(QUEUE, q.name)
+		c.client.unsubscribe(q.name)
 	}
 }

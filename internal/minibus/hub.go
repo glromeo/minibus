@@ -53,3 +53,11 @@ func (h *Hub) getTopic(name string) *topic {
 	}
 	return t
 }
+
+func (h *Hub) dispatch(to string, msg message) bool {
+	if to[0] == '#' {
+		return h.getTopic(to).publish(msg)
+	} else {
+		return h.getQueue(to).enqueue(msg)
+	}
+}

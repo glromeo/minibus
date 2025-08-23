@@ -12,33 +12,24 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-func wsURL(t *testing.T, base, path string) string {
+func startTestServer(t *testing.T) (wsURL string, srv *httptest.Server) {
 	t.Helper()
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatal(err)
-	}
+	srv = startTestServerWith(t, defaultConfig())
+	u, _ := url.Parse(srv.URL)
 	u.Scheme = "ws"
-	u.Path = path
-	return u.String()
-}
-
-func startTestServer(t *testing.T) (srv *httptest.Server, cfg Config) {
-	// default server with defaultConfig
-	t.Helper()
-	cfg = defaultConfig()
-	return startTestServerWith(t, cfg)
+	u.Path = "/minibus"
+	wsURL = u.String()
+	return wsURL, srv
 }
 
 // startTestServerWith allows customizing config (e.g., buffer sizes) per test
-func startTestServerWith(t *testing.T, cfg Config) (srv *httptest.Server, outCfg Config) {
+func startTestServerWith(t *testing.T, cfg Config) *httptest.Server {
 	t.Helper()
-	outCfg = cfg
 	mux := http.NewServeMux()
 	mux.HandleFunc("/minibus", handleWebSocket(cfg))
-	srv = httptest.NewServer(mux)
+	srv := httptest.NewServer(mux)
 	t.Cleanup(func() { srv.Close() })
-	return srv, outCfg
+	return srv
 }
 
 func dialWS(t *testing.T, ctx context.Context, wsAddr string) *websocket.Conn {
@@ -58,14 +49,14 @@ func mustWrite(t *testing.T, ctx context.Context, c *websocket.Conn, f Frame) {
 	}
 }
 
-func mustRead(t *testing.T, ctx context.Context, c *websocket.Conn, out any) {
+func mustRead(t *testing.T, ctx context.Context, c *websocket.Conn, out *Frame) {
 	t.Helper()
 	if err := wsjson.Read(ctx, c, out); err != nil {
 		t.Fatalf("read: %v", err)
 	}
 }
 
-func readWithTimeout(t *testing.T, d time.Duration, c *websocket.Conn, out any) (ok bool) {
+func readWithTimeout(t *testing.T, d time.Duration, c *websocket.Conn, out *Frame) (ok bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
@@ -125,17 +116,17 @@ func TestHub_GetQueueTopic_Singleton(t *testing.T) {
 }
 
 func TestPingPong(t *testing.T) {
-	srv, _ := startTestServer(t)
+	wsURL, _ := startTestServer(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	c := dialWS(t, ctx, wsURL(t, srv.URL, "/minibus"))
-	mustWrite(t, ctx, c, Frame{Type: "ping"})
+	c := dialWS(t, ctx, wsURL)
+	mustWrite(t, ctx, c, Frame{What: "ping"})
 
 	var f Frame
 	mustRead(t, ctx, c, &f)
-	if f.Type != "pong" {
+	if f.What != "pong" {
 		t.Fatalf("expected pong, got %#v", f)
 	}
 }

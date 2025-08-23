@@ -15,7 +15,7 @@ type client struct {
 	wsMu   sync.Mutex // serialize writes
 	hub    *Hub
 	subsMu sync.Mutex
-	subs   map[string]handler // key = kind:name
+	subs   map[string]handler
 }
 
 func (c *client) writeJSON(ctx context.Context, f any) error {
@@ -24,26 +24,23 @@ func (c *client) writeJSON(ctx context.Context, f any) error {
 	return wsjson.Write(ctx, c.ws, f)
 }
 
-func (c *client) subscribe(kind Kind, name string, once bool) {
+func (c *client) subscribe(to, from string, once bool) {
 	var h handler
-	if kind == "queue" {
-		q := c.hub.getQueue(name)
-		h = q.addConsumer(c, once)
+	if to[0] == '#' {
+		t := c.hub.getTopic(to)
+		h = t.addSubscriber(c, from, once)
 	} else {
-		t := c.hub.getTopic(name)
-		h = t.addSubscriber(c, once)
+		q := c.hub.getQueue(to)
+		h = q.addConsumer(c, from, once)
 	}
-
-	// avoids collisions: "queue:jobs" vs "topic:jobs"
-	qn := string(kind) + ":" + name
 
 	// If already subscribed, remove old handle first (avoid duplicates/leaks)
 	var old handler
 	c.subsMu.Lock()
-	if prev, ok := c.subs[qn]; ok {
+	if prev, ok := c.subs[to]; ok {
 		old = prev
 	}
-	c.subs[qn] = h
+	c.subs[to] = h
 	c.subsMu.Unlock()
 
 	if old != nil {
@@ -51,13 +48,11 @@ func (c *client) subscribe(kind Kind, name string, once bool) {
 	}
 }
 
-func (c *client) unsubscribe(kind Kind, name string) {
-	qn := string(kind) + ":" + name
-
+func (c *client) unsubscribe(name string) {
 	// Take the handle without holding the lock during remove()
 	c.subsMu.Lock()
-	h := c.subs[qn]
-	delete(c.subs, qn)
+	h := c.subs[name]
+	delete(c.subs, name)
 	c.subsMu.Unlock()
 
 	if h != nil {
@@ -66,7 +61,7 @@ func (c *client) unsubscribe(kind Kind, name string) {
 }
 
 func (c *client) unsubscribeAll() {
-	// Snapshot to avoid lock inversion (client -> queue/topic)
+	// Snapshot To avoid lock inversion (client -> queue/topic)
 	c.subsMu.Lock()
 	handlers := make([]handler, 0, len(c.subs))
 	for k, h := range c.subs {

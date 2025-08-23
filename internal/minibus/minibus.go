@@ -10,23 +10,18 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-type Kind string
-
 type Frame struct {
-	Type   string          `json:"type"`             // pub|sub|msg|ack|nack|flow|ping|pong|once
-	Kind   Kind            `json:"kind,omitempty"`   // "queue" | "topic"
-	Target string          `json:"target,omitempty"` // queue name
-	ID     string          `json:"id,omitempty"`
-	Data   json.RawMessage `json:"data,omitempty"`
+	Id   string          `json:"id"`
+	What string          `json:"what"` // pub|sub|msg|ack|nack|flow|ping|pong|once
+	To   string          `json:"to"`   // {queue|topic}/{uuid}
+	From string          `json:"from"` // client uuid
+	Time int64           `json:"time"`
+	Data json.RawMessage `json:"data,omitempty"`
 }
-
-const (
-	TOPIC Kind = "topic"
-	QUEUE      = "queue"
-)
 
 type message struct {
 	id   string
+	time int64
 	data json.RawMessage
 }
 
@@ -52,52 +47,43 @@ func handleWebSocket(config Config) http.HandlerFunc {
 		}
 
 		for {
+			at := time.Now().UnixMilli()
+
 			var f Frame
 			if err := wsjson.Read(ctx, ws, &f); err != nil {
 				client.unsubscribeAll()
 				return
 			}
 
-			// default to queue kind when not provided, matching protocol expectations
-			if f.Kind == "" {
-				f.Kind = QUEUE
-			}
-
-			switch f.Type {
+			switch f.What {
 			case "ping":
-				_ = client.writeJSON(ctx, Frame{Type: "pong"})
+				_ = client.writeJSON(ctx, Frame{What: "pong"})
 			case "once", "sub":
-				if f.Target == "" {
+				if f.To == "" {
 					continue
 				}
-				client.subscribe(f.Kind, f.Target, f.Type == "once")
+				// default To queue kind when not provided, matching protocol expectations
+				client.subscribe(f.To, f.From, f.What == "once")
 			case "pub":
-				if f.Target == "" || len(f.Data) == 0 {
+				if f.To == "" || len(f.Data) == 0 {
 					continue
 				}
-				msg := message{id: f.ID, data: f.Data}
-				var ok bool
-				if f.Kind == "queue" {
-					ok = hub.getQueue(f.Target).enqueue(msg)
-				} else {
-					ok = hub.getTopic(f.Target).publish(msg)
-				}
-				if !ok {
-					// Optional: tell publisher we dropped due to backpressure
+				if !hub.dispatch(f.To, message{id: f.Id, time: at, data: f.Data}) {
+					// Optional: tell publisher we dropped due To backpressure
 					_ = client.writeJSON(ctx, Frame{
-						Type:   "nack",
-						Kind:   f.Kind,
-						Target: f.Target,
-						ID:     f.ID,
-						Data:   json.RawMessage(`"queue full"`),
+						What: "nack",
+						From: f.To,
+						To:   f.From,
+						Id:   f.Id,
+						Data: json.RawMessage(`"queue full"`),
 					})
 				} else {
 					// Optional: confirm
 					_ = client.writeJSON(ctx, Frame{
-						Type:   "ack",
-						Kind:   f.Kind,
-						Target: f.Target,
-						ID:     f.ID,
+						What: "ack",
+						From: f.To,
+						To:   f.From,
+						Id:   f.Id,
 					})
 				}
 			case "ack", "nack", "flow":

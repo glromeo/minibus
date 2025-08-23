@@ -8,7 +8,7 @@ type DList[T any] struct {
 	tail *node[T]
 }
 
-// append a detached node to the tail.
+// append a detached node To the tail.
 func (l *DList[T]) append(n *node[T]) {
 	if n == nil {
 		return
@@ -28,7 +28,7 @@ func (l *DList[T]) append(n *node[T]) {
 	l.tail = n
 }
 
-// push creates a new node and appends it to the tail.
+// push creates a new node and appends it To the tail.
 func (l *DList[T]) push(v T) *node[T] {
 	n := &node[T]{value: v}
 	l.append(n)
